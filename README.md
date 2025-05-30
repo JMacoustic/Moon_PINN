@@ -7,7 +7,7 @@ This is a implementation of Finite PINN model including temporal axis. Generates
 
 First, clone repository.
 
-    git clone https://github.com/JMacoustic/MoonCornell.git
+    git clone https://github.com/JMacoustic/Moon_PINN.git
 
 Next, go into the cloned repo and train the model.
     
