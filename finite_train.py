@@ -1,21 +1,25 @@
-from model import generate_mesh
-from pinn import Finite_PINN, Offline, Online
+from utils.auxetic import *
+from src.models.finite_pinn import *
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.collections import LineCollection
 from time import perf_counter as default_timer
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-mesh_data = generate_mesh()
+mesh_data = generate_auxetic()
 
 # Setup PINN system
-OFF = Offline(device=device, mesh_data=mesh_data, E=5.0, nu=0.3, t=1.0, rho=1.0, endtime=10.0, steps=100)
+OFF = Offline(device=device, mesh_data=mesh_data, E=5.0, nu=0.3, t=1.0, rho=1.0, endtime=1.0, steps=100)
 model = Finite_PINN().to(device)
 ON = Online(OFF, model, device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
-num_epochs = 1000
+num_epochs = 2000
+lr = 1e-2
+optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = num_epochs, eta_min = 1e-6)
+
 
 # Precompute (x, y, t) over entire mesh and time
 x = OFF.X.view(-1, 1).to(device)
@@ -37,12 +41,13 @@ for ep in range(num_epochs):
     u_pred = torch.cat((u_x, u_y), dim=1).view(OFF.T.shape[0], -1)
 
     pde = ON.PDE_loss(u_pred)
-    bc = ON.BC_loss(u_pred)
-    ic = ON.IC_loss(u_pred)
+    bc  = ON.BC_loss(u_pred)
+    ic  = ON.IC_loss(u_pred)
     loss = pde + 5 * bc + 2 * ic
 
     loss.backward()
     optimizer.step()
+    scheduler.step()  # <-- advance cosine schedule
 
     t2 = default_timer()
 
@@ -52,7 +57,10 @@ for ep in range(num_epochs):
     bc_history.append(bc.item())
     ic_history.append(ic.item())
 
-    print(f"Epoch:{ep+1}, IC:{ic:.2e}, BC:{bc:.2e}, PDE:{pde:.2e}")
+    # (optional) show current LR
+    cur_lr = optimizer.param_groups[0]["lr"]
+    print(f"Epoch:{ep+1}, LR:{cur_lr:.2e}, IC:{ic.item():.2e}, BC:{bc.item():.2e}, PDE:{pde.item():.2e}")
+
 # Inference & Visualization
 model.eval()
 with torch.no_grad():
@@ -98,18 +106,3 @@ ani = animation.FuncAnimation(fig, update, frames=num_steps, interval=50, blit=T
 ani.save("pinn_motion_with_edges.gif", dpi=100, writer='pillow')
 plt.show()
 
-
-# plt.figure(figsize=(10, 6))
-# plt.plot(loss_history, label='Total Loss')
-# plt.plot(pde_history, label='PDE Loss')
-# plt.plot(bc_history, label='BC Loss')
-# plt.plot(ic_history, label='IC Loss')
-# plt.yscale('log')
-# plt.xlabel('Epoch')
-# plt.ylabel('Loss')
-# plt.title('Loss Evolution During Training')
-# plt.legend()
-# plt.grid(True)
-# plt.tight_layout()
-# plt.savefig("loss_curve.png", dpi=150)
-# plt.show()

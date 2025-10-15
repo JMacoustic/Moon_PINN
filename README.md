@@ -12,7 +12,7 @@ First, clone repository.
 Next, go into the cloned repo and train the model.
     
     cd path/to/cloned/repo/
-    python train.py
+    python simple_train.py
 
 ## Run
 

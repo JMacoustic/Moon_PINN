@@ -1,4 +1,4 @@
-from model import generate_mesh
+from utils.auxetic import generate_mesh
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
