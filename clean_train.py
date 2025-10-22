@@ -301,7 +301,7 @@ if __name__ == "__main__":
     aux = Aux(grid_size=(10, 10), pitch=(1.0, 1.2), x_offset=0.2, thickness=0.15, add_diagonals=True)
     cfg = TrainCfg(
         name="251023_testrun_v1",
-        num_cycles=30,
+        num_cycles=1000,
         sim_epochs_per_cycle=50,
         geom_steps_per_cycle=10,
         geom_lr=1000.0,
