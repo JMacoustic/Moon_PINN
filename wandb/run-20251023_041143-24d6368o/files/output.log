@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "C:\Users\juhye\Desktop\Current Files\gishisul\Moon_PINN\clean_train.py", line 331, in <module>
+    pinn = train_pinn(aux, mat=Material(E=20.0, nu=0.3, rho=1.0, plane_stress=True), cfg=cfg)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\juhye\Desktop\Current Files\gishisul\Moon_PINN\clean_train.py", line 92, in train_pinn
+    wandb.define_metric("*", step="step")
+  File "C:\Users\juhye\.pyenv\pyenv-win\versions\3.12.8\Lib\site-packages\wandb\sdk\wandb_run.py", line 399, in wrapper
+    return func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\juhye\.pyenv\pyenv-win\versions\3.12.8\Lib\site-packages\wandb\sdk\wandb_run.py", line 457, in wrapper_fn
+    return func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\juhye\.pyenv\pyenv-win\versions\3.12.8\Lib\site-packages\wandb\sdk\wandb_run.py", line 444, in wrapper
+    return func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Run.define_metric() got an unexpected keyword argument 'step'

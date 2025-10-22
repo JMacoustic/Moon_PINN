@@ -69,10 +69,27 @@ class ElastodynamicsPINN(nn.Module):
         self.mat  = Elastic2D(mat)
         self.cfg  = cfg
         self.model = MLP(in_dim=3, out_dim=2, width=128, depth=6, act=nn.SiLU)
+        self.m_bottom = float(getattr(cfg, "m_bottom", 0.0))  # lumped mass (per unit thickness)
+        self.mass_node_idx = None  # index within bottom_ids
 
     # Optional: notify the model when the mesh geometry changes
     def set_mesh(self, mesh):
         self.mesh = mesh
+    
+    def set_bottom_mass(self, mass: float, node_index: int | None = None):
+        """Assign a lumped mass to one bottom node (free node)."""
+        self.m_bottom = float(mass)
+        if self.mesh.bottom_ids.numel() == 0:
+            self.mass_node_idx = None
+            return
+        if node_index is not None:
+            self.mass_node_idx = int(node_index)
+            return
+        # default: node closest to bottom-edge centroid in x
+        B = self.mesh.verts_torch[self.mesh.bottom_ids].to(next(self.parameters()).device)
+        xB = B[:, 0]
+        x0 = xB.mean()
+        self.mass_node_idx = int((xB - x0).abs().argmin().item())
 
     # ----- core -----
     def forward(self, x, y, t):
@@ -129,6 +146,58 @@ class ElastodynamicsPINN(nn.Module):
         """u = 0, v = 0 on bottom."""
         u, v = self.forward(x, y, t)
         return u, v
+    
+    def bc_bottom_mass(self, time_steps: int = 25):
+        """
+        Boundary only at the selected bottom mass node:
+          shear_free_mass : -σ_xy -> 0
+          dyn_balance_mass: -σ_yy - m_b * v_tt -> 0
+        All other bottom nodes are unconstrained here (free).
+        """
+        device = next(self.parameters()).device
+
+        # early exits (no BC terms to add)
+        if self.m_bottom <= 0.0 or self.mesh.bottom_ids.numel() == 0:
+            z = torch.zeros((), dtype=torch.float32, device=device)
+            return z, z
+
+        # ensure mass_node_idx is valid
+        if self.mass_node_idx is None or not (0 <= self.mass_node_idx < self.mesh.bottom_ids.numel()):
+            self.set_bottom_mass(self.m_bottom, None)
+            if self.mass_node_idx is None:
+                z = torch.zeros((), dtype=torch.float32, device=device)
+                return z, z
+
+        # gather the mass node coords (constant in time)
+        B = self.mesh.verts_torch[self.mesh.bottom_ids].to(device)  # (Nb,2)
+        x0, y0 = B[self.mass_node_idx, 0], B[self.mass_node_idx, 1]
+
+        # time grid
+        T = time_steps
+        t = torch.linspace(0.0, self.cfg.T, steps=T, device=device).requires_grad_(True)
+
+        # repeat node over time
+        x = x0.expand(T).clone().requires_grad_(True)
+        y = y0.expand(T).clone().requires_grad_(True)
+
+        # forward & derivs
+        u, v = self.forward(x, y, t)
+        dux, duy, dut, dvx, dvy, dvt = self._first_derivs(u, v, x, y, t)
+
+        # stresses at the mass node
+        sxx, syy, sxy = self.mat.stress(dux, duy, dvx, dvy)
+
+        # vertical acceleration v_tt
+        v_tt = autograd.grad(dvt, t, grad_outputs=torch.ones_like(dvt),
+                             create_graph=True, retain_graph=True)[0]
+
+        # bottom outward normal n=(0,-1): traction t = σ·n -> t_x = -σ_xy, t_y = -σ_yy
+        shear_free_mass  = -sxy                        # -> 0
+        dyn_balance_mass = (-syy) - self.m_bottom * v_tt  # -> 0
+
+        L = (shear_free_mass**2).mean() + (dyn_balance_mass**2).mean()
+
+        return L
 
     def bc_top_disp(self, x, y, t):
         """u = 0, v = V0 * 4 * sin(2π f t) on top."""

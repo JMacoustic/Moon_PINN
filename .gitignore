@@ -1,2 +1,5 @@
 outputs/data/*
 __pycache__/*
+wandb/
+
+*.pyc

@@ -1,0 +1,40 @@
+{
+  "os": "Windows-11-10.0.26100-SP0",
+  "python": "CPython 3.12.8",
+  "startedAt": "2025-10-22T19:14:10.345182Z",
+  "program": "C:\\Users\\juhye\\Desktop\\Current Files\\gishisul\\Moon_PINN\\clean_train.py",
+  "codePath": "clean_train.py",
+  "codePathLocal": "clean_train.py",
+  "git": {
+    "remote": "https://github.com/JMacoustic/Moon_PINN.git",
+    "commit": "a166bc4deefa898090bc7481800a1b752e0c8c9e"
+  },
+  "email": "juhyeun2001@snu.ac.kr",
+  "root": "C:\\Users\\juhye\\Desktop\\Current Files\\gishisul\\Moon_PINN",
+  "host": "문주현의노트북",
+  "executable": "C:\\Users\\juhye\\.pyenv\\pyenv-win\\versions\\3.12.8\\python.exe",
+  "cpu_count": 14,
+  "cpu_count_logical": 20,
+  "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "511001489408",
+      "used": "370095673344"
+    }
+  },
+  "memory": {
+    "total": "14743887872"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+      "memoryTotal": "6439305216",
+      "cudaCores": 2560,
+      "architecture": "Ada",
+      "uuid": "GPU-c4a6833a-9ed5-8217-7b2e-3bbd1ed38922"
+    }
+  ],
+  "cudaVersion": "12.7",
+  "writerId": "03e2ym4k2neqmopxupscqtj745vgjtjh"
+}

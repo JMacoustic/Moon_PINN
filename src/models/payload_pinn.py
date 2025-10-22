@@ -188,34 +188,29 @@ class ElastodynamicsPINN(nn.Module):
 
     # ----- Transmissibility metric (RMS over time) -----
     def transmissibility_loss(self, time_steps: int = 33, use_accel: bool = False):
-        """
-        T = RMS( payload / base ) over [0, T], using displacement or acceleration.
-        DC removed before RMS.
-        """
-        device = next(self.parameters()).device
-        times = torch.linspace(0.0, float(self.cfg.T), steps=time_steps, device=device).requires_grad_(True)
+        with torch.enable_grad():
+            device = next(self.parameters()).device
+            times = torch.linspace(0.0, float(self.cfg.T), steps=time_steps, device=device)
+            times.requires_grad_(True)
 
-        # payload signal
-        yp   = self.payload(times)
-        yp_t = autograd.grad(yp, times, grad_outputs=torch.ones_like(yp), create_graph=True, retain_graph=True)[0]
-        yp_tt= autograd.grad(yp_t, times, grad_outputs=torch.ones_like(yp_t), create_graph=True, retain_graph=True)[0]
+            yp   = self.payload(times)
+            yp_t = autograd.grad(yp, times, grad_outputs=torch.ones_like(yp), create_graph=True, retain_graph=True)[0]
+            yp_tt= autograd.grad(yp_t, times, grad_outputs=torch.ones_like(yp_t), create_graph=True, retain_graph=True)[0]
 
-        # base signal (scalar function)
-        yb   = self._y_base(times)
-        yb_t = autograd.grad(yb, times, grad_outputs=torch.ones_like(yb), create_graph=True, retain_graph=True)[0]
-        yb_tt= autograd.grad(yb_t, times, grad_outputs=torch.ones_like(yb_t), create_graph=True, retain_graph=True)[0]
+            yb   = self._y_base(times)
+            yb_t = autograd.grad(yb, times, grad_outputs=torch.ones_like(yb), create_graph=True, retain_graph=True)[0]
+            yb_tt= autograd.grad(yb_t, times, grad_outputs=torch.ones_like(yb_t), create_graph=True, retain_graph=True)[0]
 
-        if use_accel or getattr(self.cfg, "use_accel_metric", False):
-            num = yp_tt - yp_tt.mean()
-            den = yb_tt - yb_tt.mean()
-        else:
-            num = yp   - yp.mean()
-            den = yb   - yb.mean()
+            if use_accel or getattr(self.cfg, "use_accel_metric", False):
+                num = yp_tt - yp_tt.mean()
+                den = yb_tt - yb_tt.mean()
+            else:
+                num = yp   - yp.mean()
+                den = yb   - yb.mean()
 
-        # add small epsilon to avoid divide-by-zero early in training
-        eps = 1e-8
-        ratio = num / (den.abs() + eps)
-        return (ratio**2).mean()
+            eps = 1e-8
+            ratio = num / (den.abs() + eps)
+            return (ratio**2).mean()
 
     # ----- Convenience: get top/bottom node coords (as tensors on device) -----
     def _top_nodes_xy(self):
