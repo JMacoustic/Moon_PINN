@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict
 from pathlib import Path
 from src.utils.animate import animate
+from src.utils.smooth_auxetic import *
 
 # ------------------ Helper ------------------
 
@@ -182,13 +183,7 @@ def train_pinn(aux_dict: Dict, mat=Material(), cfg=TrainCfg()):
         if (ep % geom_every) == 0:
             # choose objective for design. If you have bottom_amplitude_loss, use that:
             with torch.enable_grad():
-                try:
-                    design_obj_base = float(pinn.bottom_vibration_loss(time_steps=getattr(cfg, "vib_steps", 25)))
-                except Exception:
-                    # fallback: recompute a quick PDE residual proxy fresh
-                    x_, y_, t_ = sample_pde_batch()
-                    rx_, ry_ = pinn.pde_residual(x_, y_, t_)
-                    design_obj_base = float((rx_.pow(2).mean() + ry_.pow(2).mean()).detach().cpu())
+                design_obj_base = float(pinn.bottom_vibration_loss(time_steps=getattr(cfg, "vib_steps", 25)))
 
             def eval_with(des):
                 # mutate aux and refresh mesh
@@ -249,7 +244,7 @@ def train_pinn(aux_dict: Dict, mat=Material(), cfg=TrainCfg()):
                 pinn.set_mesh(mesh)
 
         # ---------------- logs + snapshots ----------------
-        if ep % 100 == 0 or ep == 1:
+        if ep % 10 == 0 or ep == 1:
             t_now = thickness_from_constraint(design.C, design.px, design.py, design.xoff)
             print(f"[Ep {ep:05d}] loss={loss.item():.3e} | pde={loss_pde.item():.3e} | "
                 f"bcT={loss_bc_top.item():.3e} | ic={loss_ic.item():.3e} | vib={loss_vib.item():.3e} | "
