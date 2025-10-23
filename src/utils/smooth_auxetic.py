@@ -193,6 +193,7 @@ class Aux:
         igrid = np.arange(nx)[None, :].repeat(ny, axis=0)
 
         CORNER = {"TL": 0, "TR": 1, "BR": 2, "BL": 3}
+        
         def quad_meta_from_nodes(nodes_four):
             j0, i0, c0 = nodes_four[0]
             j1, i1, c1 = nodes_four[1]

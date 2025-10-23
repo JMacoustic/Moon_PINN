@@ -9,6 +9,7 @@ from src.utils.animate import animate
 from src.utils.smooth_auxetic import *
 from src.models.simple_pinn import *
 import wandb
+import json 
 
 # ------------------ Config ------------------
 @dataclass
@@ -61,6 +62,37 @@ class TrainCfg:
     project: str = None      # set to your project name or leave None to use env WANDB_PROJECT
     tags: tuple = ("alt-train",)
     notes: str = ""
+
+    # === SAVE HELPERS (minimal) ===
+def _ckpt_dir():
+        d = Path("outputs/checkpoints") / cfg.name
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+def _save(design, ep_global: int = None, tag: str | None = None):
+        d = _ckpt_dir()
+        tag = tag or "latest"  # default to overwriting "latest"
+
+        # 1) weights (single file overwritten)
+        torch.save(pinn.state_dict(), d / f"{tag}_weights.pt")
+
+        # 2) geometry (single file overwritten)
+        geom = {
+            "px": float(design.px),
+            "py": float(design.py),
+            "xoff": float(design.xoff),
+            "t": float(thickness_from_constraint(design.C, design.px, design.py, design.xoff)),
+            "C": float(design.C),
+        }
+        with open(d / f"{tag}_geometry.json", "w", encoding="utf-8") as f:
+            json.dump(geom, f, indent=2)
+
+        # 3) mesh (single file overwritten)
+        np.savez_compressed(
+            d / f"{tag}_mesh.npz",
+            verts=aux.verts_torch.detach().cpu().numpy(),
+            tris=aux.tris_torch.detach().cpu().numpy(),
+        )
 
 def thickness_from_constraint(C: float, px: float, py: float, xoff: float) -> float:
     denom = (py + 0.5 * px + xoff)
@@ -286,6 +318,7 @@ def train_pinn(aux: "Aux", mat=Material(), cfg=TrainCfg()):
             ep_global += 1
             geom_step(k, ep_global)
         snapshot(ep_global)
+        _save(design, tag = "latest")
 
     # summarize final design
     t_final = thickness_from_constraint(design.C, design.px, design.py, design.xoff)
@@ -294,6 +327,7 @@ def train_pinn(aux: "Aux", mat=Material(), cfg=TrainCfg()):
     run.summary["final/xoff"] = design.xoff
     run.summary["final/t"] = t_final
 
+    _save(design, tag = "final")
     return pinn
 
 # ----------------- Example usage -----------------
