@@ -6,7 +6,8 @@ from src.utils.auxetic import *
 
 def animate(cfg, SCALE=1.5, FPS=15, DPI=150, LINE_W=0.6):
     # ----------------- Config -----------------
-    SNAP_GLOB = f"outputs/data/{cfg.name}_*.npz"     # matches ..._{k:04d}.npz
+    SNAP_GLOB = f"outputs/data/{cfg.name}/{cfg.name}_*.npz"     # matches ..._{k:04d}.npz
+    CKPT_PATH = f"outputs/checkpoints/{cfg.name}"
     MP4_PATH  = f"outputs/video/{cfg.name}.mp4"
     GIF_PATH  = f"outputs/gif/{cfg.name}.gif"
 
