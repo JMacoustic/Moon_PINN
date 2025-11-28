@@ -1,6 +1,6 @@
-# Dynamic Meta-PINN
+# Meta Fourier PINN 
 
-This is a implementation of Finite PINN model including temporal axis. Generates 3x3 metamaterial structure with triangular mesh and simulates dynamics.
+This is a implementation of PINN simulation of Metamaterial in time domain. Generates re-entrant honeycomb structure with triangular mesh and simulates dynamics for sinusoidal wave input. You can optimize geometry to reduce vibration of the output node.
 
 
 ## Installation
@@ -12,9 +12,16 @@ First, clone repository.
 Next, go into the cloned repo and train the model.
     
     cd path/to/cloned/repo/
-    python simple_train.py
+    bash scripts/setup.sh
 
-## Run
+## Training
 
-Once you train the model, it will automatically start simulation right after.
+Edit the training configuration file `configs/base_config.json` as your training preference. Once you are done, run the following script at the root.
 
+    bash scripts/dev.sh
+
+## Visualization
+
+Run below code to save visualization of the trained simulation in the `outputs/visuals` folder.
+
+    bash scripts/dev.sh
