@@ -2,7 +2,7 @@ import re, glob, numpy as np, matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation
 from matplotlib.animation import FFMpegWriter, PillowWriter
 from pathlib import Path
-from src.utils.auxetic import *
+from utils.auxetic import *
 
 def animate(cfg, SCALE=1.5, FPS=15, DPI=150, LINE_W=0.6):
     # ----------------- Config -----------------

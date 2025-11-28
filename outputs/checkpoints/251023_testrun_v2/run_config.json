@@ -1,0 +1,58 @@
+{
+  "train": {
+    "name": "251027_testrun_v0",
+    "T": 10.0,
+    "f_top": 2,
+    "V0": 1,
+    "m_bottom": 1,
+    "device": "cuda",
+    "num_cycles": 1000,
+    "sim_epochs_per_cycle": 50,
+    "geom_steps_per_cycle": 10,
+    "lr": 0.001,
+    "pde_batch": 8192,
+    "bc_batch": 2048,
+    "ic_batch": 2048,
+    "w_pde": 1.0,
+    "w_bc": 10.0,
+    "w_ic": 2.0,
+    "w_vib": 1.0,
+    "vib_steps": 25,
+    "geom_lr": 1000.0,
+    "geom_fd_eps": 0.001,
+    "geom_clip": 0.002,
+    "print_every": 10,
+    "project": "auxetic-pinn",
+    "tags": [
+      "pinn",
+      "geom-opt"
+    ],
+    "notes": "Alternating sim/geom with FD grads; logs geometry + losses + vibration."
+  },
+  "material": {
+    "E": 20.0,
+    "nu": 0.3,
+    "rho": 1.0,
+    "plane_stress": true
+  },
+  "design_init": {
+    "px": 1.0,
+    "py": 1.0,
+    "xoff": 0.2,
+    "t": 0.15,
+    "C": 0.255
+  },
+  "aux": {
+    "grid_size": [
+      10,
+      10
+    ],
+    "pitch": [
+      1.0,
+      1.0
+    ],
+    "x_offset": 0.2,
+    "thickness": 0.15,
+    "add_diagonals": true
+  }
+}

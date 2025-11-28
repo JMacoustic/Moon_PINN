@@ -1,0 +1,1 @@
+python src/clean_train.py --config configs/simul_config.json

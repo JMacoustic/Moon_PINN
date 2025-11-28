@@ -1,0 +1,56 @@
+{
+    "training": {
+        "name": "251123_final_fourier_v1",
+        "T": 5.0,
+        "f_top": 2.0,
+        "V0": 0.005,
+        "bottom_mode": "payload",
+        "m_bottom": 0.5,
+        "payload_P0": -5.0,
+        "vib_steps": 1000,
+
+        "w_pde": 1000.0,
+        "w_bc_top": 1.0,
+        "w_bc_bottom": 10.0,
+        "w_ic": 2.0,
+        "w_vib": 1.0,
+        "lr": 0.0001,
+
+        "num_cycles": 20,
+        "sim_epochs_per_cycle": 50,
+        "geom_steps_per_cycle": 5,
+        
+        "train_mode": "alternating",   
+
+        "geom_use_pde": false,
+        "geom_use_bc": false,   
+        "geom_use_ic": false,
+        "geom_use_vib": true, 
+        "sim_use_vib_loss": false,
+
+        "geom_lr": 0.0005,
+        "geom_fd_eps": 0.001,
+        "geom_clip": 0.01,
+
+        "print_every": 10,
+        "project": "auxetic-pinn",
+        "tags": ["pinn", "geom-opt"],
+        "notes": "Alternating sim/geom with FD grads; logs geometry + losses + vibration."
+    },
+    
+    "geometry": {
+        "C": 0.002,
+        "grid_size": [6, 20],
+        "pitch": [0.15, 0.1],
+        "x_offset": 0.02,
+        "add_diagonals": true
+    },
+
+    "material": {
+        "E": 2000000000.0,
+        "nu": 0.35,
+        "rho": 1240.0,
+        "z_width": 0.1,
+        "plane_stress": true
+    }
+}

@@ -1,0 +1,1 @@
+python src/utils/visualize.py --config configs/base_config.json

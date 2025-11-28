@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from utils import load_config
 
 
 # ------------------------------- IO -------------------------------
@@ -211,31 +212,35 @@ def make_bottom_disp_plot(run_name: str, V0: np.ndarray, times: np.ndarray, disp
 # --------------------------------- Main --------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description="Auxetic mesh display/export tools")
-    ap.add_argument("--name", required=True, help="Run name (folder under outputs/data and outputs/checkpoints)")
-    ap.add_argument("--fps", type=int, default=15)
-    ap.add_argument("--size", type=int, nargs=2, default=[900, 900], metavar=("W", "H"))
-    ap.add_argument("--cmap", type=str, default="viridis")
-    ap.add_argument("--outdir", type=str, default="outputs/visuals")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True)
+    args = parser.parse_args()
 
-    V0, T, times, disps, train_cfg, geom = load_run(args.name)
+    cfg_json = load_config(args.config)
 
-    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
-    W, H = args.size
+    NAME = cfg_json["training"]["name"]
+    FPS = 15
+    SIZE = [900, 900]
+    CMAP = "viridis"
+    OUTDIR = "outputs/visuals"
 
-    mp4_path = outdir / f"{args.name}_disp.mp4"
-    rms_png  = outdir / f"{args.name}_rms.png"
-    bot_png  = outdir / f"{args.name}_bottom_disp.png"
+    V0, T, times, disps, train_cfg, geom = load_run(NAME)
+
+    outdir = Path(OUTDIR); outdir.mkdir(parents=True, exist_ok=True)
+    W, H = SIZE
+
+    mp4_path = outdir / f"{NAME}_disp.mp4"
+    rms_png  = outdir / f"{NAME}_rms.png"
+    bot_png  = outdir / f"{NAME}_bottom_disp.png"
 
     print(f"[display] making displacement-colored video: {mp4_path}")
-    make_video_disp(args.name, V0, T, times, disps, mp4_path, W=W, H=H, fps=args.fps, cmap=args.cmap)
+    make_video_disp(NAME, V0, T, times, disps, mp4_path, W=W, H=H, fps=FPS, cmap=CMAP)
 
     print(f"[display] making RMS displacement field png: {rms_png}")
-    make_rms_png(args.name, V0, T, times, disps, rms_png, W=W, H=H, cmap=args.cmap)
+    make_rms_png(NAME, V0, T, times, disps, rms_png, W=W, H=H, cmap=CMAP)
 
     print(f"[display] making bottom displacement plot: {bot_png}")
-    make_bottom_disp_plot(args.name, V0, times, disps, bot_png)
+    make_bottom_disp_plot(NAME, V0, times, disps, bot_png)
 
     print("[display] done.")
 
