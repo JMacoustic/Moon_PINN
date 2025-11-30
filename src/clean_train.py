@@ -133,7 +133,8 @@ def train_pinn(aux: "Aux", mat: Material, cfg: TrainCfg):
         return P[:, 0], P[:, 1], t.view(-1)
 
     def sample_bc(ids):
-        P = aux.sample_on_nodes(ids, cfg.bc_batch).to(device)
+        # P = aux.sample_on_nodes(ids, cfg.bc_batch).to(device)
+        P = aux.verts_torch[ids].to(device)
         if P.numel() == 0:
             z = torch.empty(0, device=device)
             return z, z, z
@@ -188,7 +189,7 @@ def train_pinn(aux: "Aux", mat: Material, cfg: TrainCfg):
                     bc_top = torch.tensor(0.0, device=device)
 
                 if cfg.geom_use_bc:
-                    bc_bottom = pinn.bc_bottom()
+                    bc_bottom = pinn.bc_bottom(time_steps = cfg.time_steps)
                 else:
                     bc_bottom = torch.tensor(0.0, device=device)
 
@@ -209,7 +210,7 @@ def train_pinn(aux: "Aux", mat: Material, cfg: TrainCfg):
 
             # vibration term
             if use_vib_term:
-                vib = pinn.bottom_vibration_loss(time_steps=cfg.vib_steps)
+                vib = pinn.bottom_vibration_loss(time_steps=cfg.time_steps)
                 J += float(cfg.w_vib * vib)
 
         # restore geometry
@@ -250,7 +251,7 @@ def train_pinn(aux: "Aux", mat: Material, cfg: TrainCfg):
                    + mse(uvt0, torch.zeros_like(uvt0)) + mse(vvt0, torch.zeros_like(vvt0)))
 
         # vibration metric
-        loss_vib = pinn.bottom_vibration_loss(time_steps=cfg.vib_steps)
+        loss_vib = pinn.bottom_vibration_loss(time_steps=cfg.time_steps)
 
         # total simulation loss
         loss = (cfg.w_pde * loss_pde
@@ -437,6 +438,8 @@ def main():
         m_bottom=cfg_json["training"]["m_bottom"],
         payload_P0=cfg_json["training"]["payload_P0"],
 
+        fourier_K = cfg_json["training"]["fourier_K"],
+
         w_pde=cfg_json["training"]["w_pde"],
         w_bc_top=cfg_json["training"]["w_bc_top"],
         w_bc_bottom=cfg_json["training"]["w_bc_bottom"],
@@ -452,7 +455,7 @@ def main():
     
         sim_use_vib_loss=cfg_json["training"]["sim_use_vib_loss"],  # default: old alternating behavior
 
-        vib_steps=cfg_json["training"]["vib_steps"],
+        time_steps=cfg_json["training"]["time_steps"],
         num_cycles=cfg_json["training"]["num_cycles"],
         sim_epochs_per_cycle=cfg_json["training"]["sim_epochs_per_cycle"],
         geom_steps_per_cycle=cfg_json["training"]["geom_steps_per_cycle"],

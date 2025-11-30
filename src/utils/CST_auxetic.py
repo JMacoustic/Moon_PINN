@@ -32,7 +32,6 @@ class Aux:
         self.tris_torch: torch.Tensor = None   # (nt,3) int64
         self.nv = 0
         self.nt = 0
-        self.total_area = 0.0
         self.alias_probs = None
         self.bottom_ids = None
         self.top_ids = None
@@ -43,7 +42,6 @@ class Aux:
         # Build everything
         self._generate_mesh_vectorized()
         self._generate_torch_mesh()
-        self._compute_areas()
         self._compute_boundary_ids()
 
     # ----------------------------
@@ -301,25 +299,6 @@ class Aux:
         self.nv = int(self.verts_torch.shape[0])
         self.nt = int(self.tris_torch.shape[0])
 
-    def _compute_areas(self):
-        if self.nt == 0:
-            self.total_area = 0.0
-            self.alias_probs = np.array([], dtype=np.float64)
-            return
-        v = self.verts_torch
-        I = self.tris_torch
-        A = 0.5 * torch.abs(
-            (v[I[:, 1], 0] - v[I[:, 0], 0]) * (v[I[:, 2], 1] - v[I[:, 0], 1]) -
-            (v[I[:, 2], 0] - v[I[:, 0], 0]) * (v[I[:, 1], 1] - v[I[:, 0], 1])
-        )
-        self.areas = A
-        self.total_area = float(A.sum())
-        # Safe normalize
-        if self.total_area > 0:
-            self.alias_probs = (A / A.sum()).cpu().numpy()
-        else:
-            self.alias_probs = np.ones(self.nt, dtype=np.float64) / max(self.nt, 1)
-
     def _compute_boundary_ids(self):
         if self.nv == 0:
             self.bottom_ids = torch.empty(0, dtype=torch.int64)
@@ -331,34 +310,6 @@ class Aux:
         tol = max(self.quantize, 1e-12)
         self.bottom_ids = torch.nonzero(torch.isclose(y, ymin, atol=tol), as_tuple=False).squeeze(1)
         self.top_ids = torch.nonzero(torch.isclose(y, ymax, atol=tol), as_tuple=False).squeeze(1)
-
-    # ----------------------------
-    # Sampling API
-    # ----------------------------
-    def sample_interior(self, n: int) -> torch.Tensor:
-        """Uniformly sample points inside the triangulated domain."""
-        if self.nt == 0 or n <= 0:
-            return torch.empty(0, 2, dtype=torch.float32)
-        idx = np.random.choice(self.nt, size=n, p=self.alias_probs)
-        tri = self.tris_torch[idx]  # (n,3)
-        A = self.verts_torch[tri[:, 0]]
-        B = self.verts_torch[tri[:, 1]]
-        C = self.verts_torch[tri[:, 2]]
-        r1 = torch.rand(n, 1, dtype=torch.float32, device=self.verts_torch.device)
-        r2 = torch.rand(n, 1, dtype=torch.float32, device=self.verts_torch.device)
-        s = torch.sqrt(r1)
-        l1 = 1.0 - s
-        l2 = s * (1.0 - r2)
-        l3 = s * r2
-        return l1 * A + l2 * B + l3 * C
-    
-    def sample_on_nodes(self, ids: torch.Tensor, n: int) -> torch.Tensor:
-        """Sample existing vertex positions uniformly from provided indices."""
-        if ids is None or ids.numel() == 0 or n <= 0:
-            return torch.empty(0, 2, dtype=torch.float32)
-        choice = torch.randint(0, ids.numel(), (n,), device=ids.device)
-        sel = ids[choice]
-        return self.verts_torch[sel]
     
     def adjust_geometry(self, pitch_new=None, x_offset_new=None, thickness_new=None):
         """

@@ -16,6 +16,7 @@ class Material:
     nu: float = 0.30
     rho: float = 1.0
     plane_stress: bool = True
+    z_width: float = 0.1
 
 
 @dataclass
@@ -33,6 +34,8 @@ class TrainCfg:
     m_bottom: float = 1.0
     payload_P0: float = -0.1
 
+    fourier_K: int = 3 # number of fourier features
+
     # train loop settings 
     num_cycles: int = 20
     sim_epochs_per_cycle: int = 50
@@ -48,6 +51,7 @@ class TrainCfg:
 
     # optimization
     lr: float = 1e-3
+    eta_min: float = 1e-6
     pde_batch: int = 8192
     bc_batch: int = 2048
     ic_batch: int = 2048
@@ -58,7 +62,7 @@ class TrainCfg:
     w_bc_bottom: float = 1.0
     w_ic: float = 2.0
     w_vib: float = 1.0
-    vib_steps: int = 25
+    time_steps: int = 25
 
     # geometry FD & step control
     geom_lr: float = 1000.0

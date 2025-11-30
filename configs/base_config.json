@@ -1,39 +1,44 @@
 {
     "training": {
-        "name": "251127_final_soft_simonly_v2",
+        "name": "251128_CT_BCICfix_zeroload_v3",
+        "use_ckpt": true,
+        "ckpt_name": "251128_CT_BCICfix_zeroload_v2",
         "T": 5.0,
         "f_top": 4.0,
         "V0": 0.005,
         "bottom_mode": "payload",
-        "m_bottom": 0.5,
-        "payload_P0": -5.0,
-        "vib_steps": 1000,
+        "m_bottom": 0.02,
+        "payload_P0": 0.0,
+        "time_steps": 1000,
 
-        "w_pde": 1000.0,
-        "w_bc_top": 1.0,
-        "w_bc_bottom": 10.0,
-        "w_ic": 2.0,
-        "w_vib": 1.0,
-        "lr": 0.0001,
+        "fourier_K": 10,
 
-        "num_cycles": 10,
-        "sim_epochs_per_cycle": 100,
-        "geom_steps_per_cycle": 5,
+        "w_pde": 1.0,
+        "w_bc_top": 10.0,
+        "w_bc_bottom": 1.0,
+        "w_ic": 1.0,
+        "w_vib": -10000.0,
+        "lr": 0.00001,
+        "eta_min": 0.0000001,
+
+        "num_cycles": 100,
+        "sim_epochs_per_cycle": 200,
+        "geom_steps_per_cycle": 50,
         
         "train_mode": "simulation",   
 
-        "geom_use_pde": true,
-        "geom_use_bc": true,   
-        "geom_use_ic": true,
+        "geom_use_pde": false,
+        "geom_use_bc": false,   
+        "geom_use_ic": false,
         "geom_use_vib": true, 
         "sim_use_vib_loss": false,
 
-        "geom_lr": 0.0005,
+        "geom_lr": 0.01,
         "geom_fd_eps": 0.001,
-        "geom_clip": 0.01,
+        "geom_clip": 0.001,
 
         "print_every": 10,
-        "project": "auxetic-pinn",
+        "project": "auxetic-CST-pinn",
         "tags": ["pinn", "geom-opt"],
         "notes": "Alternating sim/geom with FD grads; logs geometry + losses + vibration."
     },
@@ -47,7 +52,7 @@
     },
 
     "material": {
-        "E": 1000000.0,
+        "E": 10000000.0,
         "nu": 0.35,
         "rho": 1240.0,
         "z_width": 0.1,

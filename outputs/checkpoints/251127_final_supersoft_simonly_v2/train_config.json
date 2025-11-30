@@ -1,0 +1,68 @@
+{
+  "train": {
+    "name": "251127_final_supersoft_simonly_v2",
+    "device": "cuda",
+    "T": 5.0,
+    "f_top": 4.0,
+    "V0": 0.05,
+    "bottom_mode": "payload",
+    "m_bottom": 0.5,
+    "payload_P0": -0.0,
+    "fourier_K": 10,
+    "num_cycles": 10,
+    "sim_epochs_per_cycle": 100,
+    "geom_steps_per_cycle": 5,
+    "train_mode": "simulation",
+    "geom_use_pde": true,
+    "geom_use_bc": true,
+    "geom_use_ic": true,
+    "geom_use_vib": true,
+    "sim_use_vib_loss": false,
+    "lr": 0.0001,
+    "pde_batch": 8192,
+    "bc_batch": 2048,
+    "ic_batch": 2048,
+    "w_pde": 1000.0,
+    "w_bc_top": 1.0,
+    "w_bc_bottom": 100.0,
+    "w_ic": 2.0,
+    "w_vib": 1.0,
+    "time_steps": 1000,
+    "geom_lr": 0.0005,
+    "geom_fd_eps": 0.001,
+    "geom_clip": 0.01,
+    "print_every": 10,
+    "project": "auxetic-pinn",
+    "tags": [
+      "pinn",
+      "geom-opt"
+    ],
+    "notes": "Alternating sim/geom with FD grads; logs geometry + losses + vibration."
+  },
+  "material": {
+    "E": 100000.0,
+    "nu": 0.35,
+    "rho": 124.0,
+    "plane_stress": true
+  },
+  "design_init": {
+    "px": 0.1362,
+    "py": 0.1034,
+    "xoff": 0.033,
+    "t": 0.009779951100244499,
+    "C": 0.002
+  },
+  "aux": {
+    "grid_size": [
+      5,
+      20
+    ],
+    "pitch": [
+      0.1362,
+      0.1034
+    ],
+    "x_offset": 0.033,
+    "thickness": 0.009779951100244499,
+    "add_diagonals": false
+  }
+}
