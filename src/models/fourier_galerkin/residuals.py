@@ -261,3 +261,29 @@ def loss_bottom_vibration(
         return 0.25 * ((b_u**2).mean() + (b_v**2).mean())
     else:
         return 0.5 * (b_v**2).mean()
+
+
+
+def loss_collision(mesh, margin: float = 0.0, eps: float = 1e-6):
+    """
+    Penalize violations of:
+        px - 2*x_offset - t > margin
+        py > margin, x_offset > margin, t > margin
+    """
+    # assume these are nn.Parameter / tensors
+    px = mesh.pitch[0]
+    py = mesh.pitch[1]
+    xoff = mesh.x_offset
+    t = mesh.thickness
+
+    loss = torch.zeros((), dtype=px.dtype, device=px.device)
+
+    # ligament / no-collision constraint: px - 2*xoff - t > margin
+    gap = px - 2.0 * xoff - t
+    loss = loss + torch.relu((margin + eps) - gap) ** 2
+
+    loss = loss + torch.relu((margin + eps) - py) ** 2
+    loss = loss + torch.relu((margin + eps) - xoff) ** 2
+    loss = loss + torch.relu((margin + eps) - t) ** 2
+
+    return loss

@@ -58,9 +58,7 @@ class TrainCfg:
 
     # loss weights & metrics
     w_pde: float = 1.0
-    w_bc_top: float = 10.0,
-    w_bc_bottom: float = 1.0
-    w_ic: float = 2.0
+    w_coll: float = 1.0
     w_vib: float = 1.0
     time_steps: int = 25
 

@@ -1,8 +1,8 @@
 {
     "training": {
-        "name": "251201_torchgeom_v3",
-        "use_ckpt": false,
-        "ckpt_name": "251201_multimodel_v2",
+        "name": "251202_diffmesh_simonly_v3",
+        "use_ckpt": true,
+        "ckpt_name": "251202_diffmesh_simonly_v2",
         "T": 5.0,
         "f_top": 4.0,
         "V0": 0.05,
@@ -14,15 +14,13 @@
         "fourier_K": 10,
 
         "w_pde": 1.0,
-        "w_bc_top": 10.0,
-        "w_bc_bottom": 1.0,
-        "w_ic": 1.0,
+        "w_coll": 1000.0,
         "w_vib": 10.0,
-        "lr": 2e-6,
-        "eta_min": 1e-9,
+        "lr": 1e-5,
+        "eta_min": 1e-8,
 
-        "num_cycles": 100,
-        "sim_epochs_per_cycle": 50,
+        "num_cycles": 3,
+        "sim_epochs_per_cycle": 200,
         "geom_steps_per_cycle": 50,
         
         "train_mode": "alternating",   
@@ -33,7 +31,7 @@
         "geom_use_vib": true, 
         "sim_use_vib_loss": false,
 
-        "geom_lr": 0.01,
+        "geom_lr": 0.001,
         "geom_fd_eps": 0.001,
         "geom_clip": 0.001,
 
@@ -44,7 +42,7 @@
     },
     
     "geometry": {
-        "C": 0.004,
+        "C": 0.002,
         "grid_size": [6, 20],
         "pitch": [0.15, 0.1],
         "x_offset": 0.03,

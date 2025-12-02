@@ -2,36 +2,101 @@
 import argparse
 import json
 from pathlib import Path
+import torch
 
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
 import imageio.v2 as imageio
-from utils import load_config
-
+from utils.utils import *
+from utils.stateclass import *
+from models.fourier_galerkin.multifreq_pinn import MultiFourierNodeModel
+from utils.CST_torch_auxetic import Aux
 
 # ---------- mesh / displacement loading ----------
+def snapshot_field(
+    model,
+    mesh,
+    T: float,
+    steps: int = 100,
+    device: torch.device | None = None,
+):
+    """
+    Evaluate model over [0, T] and return verts_stack & tris as NumPy.
 
-def load_base_mesh(run_name: str):
-    """Load reference verts/tris from latest_mesh.npz."""
+    Returns
+    -------
+    verts_stack : (steps, N_verts, D)
+    tris        : (N_elems, 3)
+    times       : (steps,)
+    """
+    if device is None:
+        device = next(model.parameters()).device
+    model = model.to(device)
+    mesh = mesh.to(device)
+
+    times = torch.linspace(0.0, T, steps=steps, device=device)
+
+    model.eval()
+    with torch.no_grad():
+        disp, _, _ = model.eval_with_derivs(times)  # (steps, N_verts, 2)
+
+    verts0 = mesh.verts_torch.to(device).detach()      # (N_verts, D)
+    verts_stack = verts0[None, ...] + disp             # (steps, N_verts, D)
+
+    tris = mesh.tris_torch.detach().cpu().numpy()      # (N_elems, 3)
+
+    return (
+        verts_stack.detach().cpu().numpy(),  # (T, N, D)
+        tris,                                # (Ne, 3)
+        times.detach().cpu().numpy(),        # (T,)
+    )
+
+
+def load_checkpoint(run_name: str, device: str = "cpu"):
     ckpt_dir = Path("outputs/checkpoints") / run_name
-    mesh_path = ckpt_dir / "latest_mesh.npz"
-    if not mesh_path.is_file():
-        raise FileNotFoundError(
-            f"{mesh_path} not found.\n"
-            "Make sure Checkpointer.save_state() was called with tag='latest' "
-            "and that it saved 'latest_mesh.npz'."
-        )
+    cfg_path = ckpt_dir / "config.json"
+    state_path = ckpt_dir / "latest.pt"
 
-    data = np.load(mesh_path)
-    if "verts" not in data or "tris" not in data:
-        raise KeyError(
-            f"{mesh_path} must contain 'verts' and 'tris' arrays."
-        )
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
 
-    verts0 = data["verts"]  # (N, D)
-    tris = data["tris"]     # (M, 3)
-    return verts0, tris
+    train_cfg = TrainCfg(**cfg["train_cfg"])
+    mat_cfg = cfg["material"]
+    material = Material(**mat_cfg)
+
+    design_cfg = cfg["design_init"]
+    design = DesignState(**design_cfg)
+
+    mesh_cfg = cfg["mesh"]
+    aux = Aux(
+        grid_size=tuple(mesh_cfg["grid_size"]),
+        pitch=tuple(mesh_cfg["pitch"]),
+        x_offset=mesh_cfg["x_offset"],
+        C_constraint=mesh_cfg["C"],
+        add_diagonals=mesh_cfg["add_diagonals"],
+    ).to(device)
+
+    model = MultiFourierNodeModel(
+        train_cfg=train_cfg,
+        mesh=aux,
+        device=torch.device(device),
+    ).to(device)
+    model.set_mesh(aux)
+
+    state = torch.load(state_path, map_location=device)
+    model.load_state_dict(state["model"])
+    aux.load_state_dict(state["mesh"])
+
+    if "design" in state:
+        for k, v in state["design"].items():
+            setattr(design, k, v)
+
+    if "material" in state:
+        for k, v in state["material"].items():
+            setattr(material, k, v)
+
+    return model, design, aux, material, train_cfg
 
 
 def _find_disp_key(npz) -> str:
@@ -156,25 +221,37 @@ def make_vibration_heatmap(verts_stack: np.ndarray, tris: np.ndarray,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--steps", type=int, default=100)
     args = parser.parse_args()
 
     cfg_json = load_config(args.config)
-
     run_name = cfg_json["training"]["name"]
     print(f"Start visualizing: {run_name}")
 
+    device = args.device
+
     # Directories
-    data_dir = Path("outputs/data") / run_name
     visuals_dir = Path("outputs/visuals")
     visuals_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load mesh + displacements
-    verts0, tris = load_base_mesh(run_name)
-    verts_stack, npz_files = load_displacements_sequence(data_dir, verts0)
-    # npz = np.load("outputs/data/251127_final_soft_simonly_v2/251127_final_soft_simonly_v2_0010.npz")
-    # print(npz["disp"])
-    print(f"Loaded {len(npz_files)} displacement files, "
-          f"total frames: {verts_stack.shape[0]}")
+    # Load model + mesh from checkpoint
+    model, design, aux, material, train_cfg = load_checkpoint(run_name, device=device)
+
+    # Take field snapshots directly from model
+    T = float(train_cfg.T)
+    verts_stack, tris, times = snapshot_field(
+        model=model,
+        mesh=aux,
+        T=T,
+        steps=args.steps,
+        device=torch.device(device),
+    )
+
+    print(
+        f"Snapshot: steps={verts_stack.shape[0]}, "
+        f"N_verts={verts_stack.shape[1]}, dim={verts_stack.shape[2]}"
+    )
 
     # Outputs
     gif_path = visuals_dir / f"{run_name}.gif"

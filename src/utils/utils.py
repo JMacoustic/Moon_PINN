@@ -5,6 +5,7 @@ import os
 import random
 import numpy as np
 import torch
+from pathlib import Path
 
 def triangulate(points):
     """
@@ -81,3 +82,5 @@ def constraint_from_geom_torch(
     denom = py + 0.5 * px + xoff
     denom = torch.clamp(denom, min=eps)
     return thickness * denom
+
+

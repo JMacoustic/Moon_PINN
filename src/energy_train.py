@@ -17,7 +17,54 @@ from models.fourier_galerkin.multifreq_pinn import MultiFourierNodeModel
 from models.fourier_galerkin.residuals import *
 from utils.stateclass import TrainCfg, DesignState, Material
 from utils.utils import *
-from utils.logger import WBLogger, Checkpointer, load_checkpoint, load_checkpoint_multi
+from utils.logger import WBLogger, Checkpointer
+
+def load_checkpoint(run_name: str, device: str = "cpu"):
+    ckpt_dir = Path("outputs/checkpoints") / run_name
+    cfg_path = ckpt_dir / "config.json"
+    state_path = ckpt_dir / "latest.pt"
+
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    train_cfg = TrainCfg(**cfg["train_cfg"])
+    mat_cfg = cfg["material"]
+    material = Material(**mat_cfg)
+
+    design_cfg = cfg["design_init"]
+    design = DesignState(**design_cfg)
+
+    mesh_cfg = cfg["mesh"]
+    aux = Aux(
+        grid_size=tuple(mesh_cfg["grid_size"]),
+        pitch=tuple(mesh_cfg["pitch"]),
+        x_offset=mesh_cfg["x_offset"],
+        C_constraint=mesh_cfg["C"],
+        add_diagonals=mesh_cfg["add_diagonals"],
+    ).to(device)
+
+    model = MultiFourierNodeModel(
+        train_cfg=train_cfg,
+        mesh=aux,
+        device=torch.device(device),
+    ).to(device)
+    model.set_mesh(aux)
+
+    state = torch.load(state_path, map_location=device)
+    model.load_state_dict(state["model"])
+    aux.load_state_dict(state["mesh"])
+
+    if "design" in state:
+        for k, v in state["design"].items():
+            setattr(design, k, v)
+
+    if "material" in state:
+        for k, v in state["material"].items():
+            setattr(material, k, v)
+
+    return model, design, aux, material, train_cfg
+
+
 
 def geometry_step(
     step_idx: int,
@@ -43,8 +90,8 @@ def geometry_step(
         E=material.E,
         nu=material.nu,
         rho=material.rho,
-        z_width=material.z_width,                  # <--- was material.z_width
-    )
+        z_width=material.z_width)
+
     M    = M.to(device)
     Kmat = Kmat.to(device)
 
@@ -60,9 +107,7 @@ def geometry_step(
     u0_verts = torch.zeros_like(mesh.verts_torch, device=device)
     bc_ids   = mesh.top_ids.to(device, dtype=torch.long)
 
-    # --------------------------
     # Loss terms (geom flags)
-    # --------------------------
     use_field_terms = train_cfg.geom_use_pde
     use_vib_term    = train_cfg.geom_use_vib
 
@@ -75,12 +120,12 @@ def geometry_step(
         L_vib = loss_bottom_vibration(model, mesh, component="v")
     else:
         L_vib = torch.zeros((), device=device)
+    
+    L_coll = loss_collision(mesh)
 
-    J = train_cfg.w_pde * L_energy + train_cfg.w_vib * L_vib
+    J = train_cfg.w_pde * L_energy + train_cfg.w_vib * L_vib + train_cfg.w_coll * L_coll
 
-    # --------------------------
     # Optimizer & scheduler
-    # --------------------------
     optimizer.zero_grad()
     J.backward()
     optimizer.step()
@@ -137,8 +182,7 @@ def sim_train_step(
             E=material.E,
             nu=material.nu,
             rho=material.rho,
-            z_width=material.z_width,
-        )
+            z_width=material.z_width)
         M    = M.to(device)
         Kmat = Kmat.to(device)
     else:
@@ -162,7 +206,6 @@ def sim_train_step(
 
     L_energy = energy_loss_fourier(t_batch, model, M, Kmat, f_verts, C=Cmat)
 
-    # --- always compute L_vib for logging, only use it in loss if enabled ---
     if train_cfg.sim_use_vib_loss:
         L_vib = loss_bottom_vibration(model, mesh,component="v")
         L_vib_term = L_vib
@@ -208,11 +251,6 @@ def train_cst_pinn(
 
     do_sim  = mode in ("simulation", "alternating")
     do_geom = mode in ("geometry", "alternating")
-
-    print("mesh.pitch device:", mesh.pitch.device)
-    print("mesh.verts_torch device:", mesh.verts_torch.device)
-    print("model device:", next(model.parameters()).device)
-    print("bottom_ids device:", mesh.bottom_ids.device)
 
     # --- SIM optimizer/scheduler ---
     if do_sim:
@@ -278,8 +316,7 @@ def train_cst_pinn(
                     scheduler=sim_scheduler,
                     epoch=global_step,
                     M=M,
-                    Kmat=Kmat,
-                )
+                    Kmat=Kmat)
 
                 if logger is not None:
                     logger.log(
@@ -334,19 +371,9 @@ def train_cst_pinn(
                         step=global_step,
                     )
 
-        # -----------------------
         # 3) CHECKPOINTING
-        # -----------------------
         if checkpointer is not None:
-            checkpointer.save_state(model, design, mesh, tag="latest")
-            checkpointer.snapshot_field(
-                name="latest",
-                model=model,
-                mesh=mesh,
-                T=train_cfg.T,
-                steps=100,
-                device=device)
-
+            checkpointer.save_state(model, mesh, design, material, tag="latest")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -405,25 +432,16 @@ def main():
         bottom_mode=cfg_json["training"]["bottom_mode"],
         m_bottom=cfg_json["training"]["m_bottom"],
         payload_P0=cfg_json["training"]["payload_P0"],
-
         fourier_K = cfg_json["training"]["fourier_K"],
-
         w_pde=cfg_json["training"]["w_pde"],
-        w_bc_top=cfg_json["training"]["w_bc_top"],
-        w_bc_bottom=cfg_json["training"]["w_bc_bottom"],
-        w_ic=cfg_json["training"]["w_ic"],
         w_vib=cfg_json["training"]["w_vib"],
+        w_coll=cfg_json["training"]["w_coll"],
         lr=cfg_json["training"]["lr"],
         eta_min =cfg_json["training"]["eta_min"],
-
-        train_mode=cfg_json["training"]["train_mode"],  # "geometry" | "simulation" | "alternating"
+        train_mode=cfg_json["training"]["train_mode"], 
         geom_use_pde=cfg_json["training"]["geom_use_pde"],
-        geom_use_bc=cfg_json["training"]["geom_use_bc"],      # both top + bottom BC
-        geom_use_ic=cfg_json["training"]["geom_use_ic"],
-        geom_use_vib=cfg_json["training"]["geom_use_vib"]  ,    # default: old behavior (vib-only geom objective)
-    
-        sim_use_vib_loss=cfg_json["training"]["sim_use_vib_loss"],  # default: old alternating behavior
-
+        geom_use_vib=cfg_json["training"]["geom_use_vib"],
+        sim_use_vib_loss=cfg_json["training"]["sim_use_vib_loss"], 
         time_steps=cfg_json["training"]["time_steps"],
         num_cycles=cfg_json["training"]["num_cycles"],
         sim_epochs_per_cycle=cfg_json["training"]["sim_epochs_per_cycle"],
@@ -446,7 +464,7 @@ def main():
     model.set_mesh(aux)
 
     if cfg_json["training"]["use_ckpt"] is True:
-        model, design, aux, _, mat = load_checkpoint_multi(cfg_json["training"]["ckpt_name"], device="cuda")
+        model, design, aux, mat, _ = load_checkpoint(cfg_json["training"]["ckpt_name"], device="cuda")
         print("successfully loaded checkpoint!")
 
     ckpt = Checkpointer(train_cfg.name)
@@ -455,7 +473,7 @@ def main():
     logger.watch(model)
 
     train_cst_pinn(
-        design = design,
+        design=design,
         model=model,
         mesh=aux,
         train_cfg=train_cfg,
