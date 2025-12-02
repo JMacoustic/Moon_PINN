@@ -59,11 +59,6 @@ class Aux(nn.Module):
         self._generate_torch_mesh()
         self._compute_boundary_ids()
 
-
-    # ----------------------------
-    # Utilities / rules
-    # ----------------------------
-
     @property
     def thickness(self) -> torch.Tensor:
         """

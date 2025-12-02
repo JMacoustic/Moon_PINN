@@ -138,7 +138,7 @@ def build_cst_mk(verts, tris, E, nu, rho, z_width, device=None, dtype=torch.floa
     return M, K
 
 
-def energy_residual_batch_fourier(t_batch, model, M, Kmat, f_verts, C=None):
+def energy_loss_fourier(t_batch, model, M, Kmat, f_verts, C=None):
     """
     t_batch: (N_t,)
     model.eval_with_derivs(t) -> (disp, vel, acc) = (..., N_verts, 2)
@@ -162,12 +162,12 @@ def energy_residual_batch_fourier(t_batch, model, M, Kmat, f_verts, C=None):
 
     term_ext  = torch.einsum("i,bi->b", f_ext_vec, qdot)
     rE = term_kin + term_str + term_diss - term_ext
-    return rE
-
-
-def energy_loss_fourier(t_batch, model, M, Kmat, f_verts, C=None):
-    rE = energy_residual_batch_fourier(t_batch, model, M, Kmat, f_verts, C=C)
     return torch.mean(rE**2)
+
+
+# def energy_loss_fourier(t_batch, model, M, Kmat, f_verts, C=None):
+#     rE = energy_residual_batch_fourier(t_batch, model, M, Kmat, f_verts, C=C)
+#     return torch.mean(rE**2)
 
 
 def loss_initial_condition(model, u0_verts: torch.Tensor):
@@ -254,13 +254,13 @@ def loss_bottom_vibration(
     b_v = coef_v_b[:, 2::2]
 
     if component == "u":
-        return 0.5 * (b_u**2).mean()
+        return torch.sqrt(0.5 * (b_u**2).mean())
     elif component == "v":
-        return 0.5 * (b_v**2).mean()
+        return torch.sqrt(0.5 * (b_v**2).mean())
     elif component == "uv":
-        return 0.25 * ((b_u**2).mean() + (b_v**2).mean())
+        return torch.sqrt(0.25 * ((b_u**2).mean() + (b_v**2).mean()))
     else:
-        return 0.5 * (b_v**2).mean()
+        return torch.sqrt(0.5 * (b_v**2).mean())
 
 
 
@@ -277,11 +277,9 @@ def loss_collision(mesh, margin: float = 0.0, eps: float = 1e-6):
     t = mesh.thickness
 
     loss = torch.zeros((), dtype=px.dtype, device=px.device)
-
-    # ligament / no-collision constraint: px - 2*xoff - t > margin
+    
     gap = px - 2.0 * xoff - t
     loss = loss + torch.relu((margin + eps) - gap) ** 2
-
     loss = loss + torch.relu((margin + eps) - py) ** 2
     loss = loss + torch.relu((margin + eps) - xoff) ** 2
     loss = loss + torch.relu((margin + eps) - t) ** 2

@@ -103,9 +103,8 @@ def geometry_step(
         f_verts[bottom_ids, 1] = P0
 
     # Time grid, IC, BC ids
-    t_batch  = torch.linspace(0.0, train_cfg.T, steps=train_cfg.time_steps, device=device)
+    t_batch = torch.rand(train_cfg.time_steps, device=device) * train_cfg.T
     u0_verts = torch.zeros_like(mesh.verts_torch, device=device)
-    bc_ids   = mesh.top_ids.to(device, dtype=torch.long)
 
     # Loss terms (geom flags)
     use_field_terms = train_cfg.geom_use_pde
@@ -197,8 +196,7 @@ def sim_train_step(
     f_verts = f_verts.to(device)
 
     u0_verts = torch.zeros_like(mesh.verts_torch).to(device)
-    bc_ids   = mesh.top_ids.to(device, dtype=torch.long)
-    t_batch  = torch.linspace(0.0, train_cfg.T, steps=train_cfg.time_steps, device=device)
+    t_batch = torch.rand(train_cfg.time_steps, device=device) * train_cfg.T
     Cmat     = None
 
     model.train()

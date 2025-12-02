@@ -18,7 +18,7 @@ def snapshot_field(
     model,
     mesh,
     T: float,
-    steps: int = 100,
+    steps: int = 500,
     device: torch.device | None = None,
 ):
     """
