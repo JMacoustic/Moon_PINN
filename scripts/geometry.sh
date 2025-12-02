@@ -1,1 +1,1 @@
-python src/clean_train.py --config configs/geom_config.json
+python src/utils/export_mesh_line.py --config configs/geom_config.json

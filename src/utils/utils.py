@@ -56,3 +56,28 @@ def set_seed(seed: int, deterministic: bool = True):
 def thickness_from_constraint(C: float, px: float, py: float, xoff: float) -> float:
     denom = (py + 0.5 * px + xoff)
     return max(1e-9, C / max(1e-9, denom))
+
+def thickness_from_constraint_torch(C, px, py, xoff):
+    eps = 1e-9
+    denom = torch.clamp(py + 0.5 * px + xoff, min=eps)
+    return torch.clamp(C / denom, min=eps)
+
+def constraint_from_geom(thickness: float, px: float, py: float, xoff: float, eps: float = 1e-9) -> float:
+    denom = py + 0.5 * px + xoff
+    if abs(denom) < eps:
+        raise ValueError(
+            f"Invalid geometry for constraint: py + 0.5*px + xoff = {denom} is too small."
+        )
+    return thickness * denom
+
+
+def constraint_from_geom_torch(
+    thickness: torch.Tensor,
+    px: torch.Tensor,
+    py: torch.Tensor,
+    xoff: torch.Tensor,
+    eps: float = 1e-9,
+) -> torch.Tensor:
+    denom = py + 0.5 * px + xoff
+    denom = torch.clamp(denom, min=eps)
+    return thickness * denom

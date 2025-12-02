@@ -13,108 +13,68 @@ import torch.nn as nn
 from utils.CST_torch_auxetic import Aux
 from models.fourier_galerkin.pinn import FourierNodeModel
 from models.fourier_galerkin.multifreq_pinn import MultiFourierNodeModel
-# from models.fourier_galerkin.geom_loss import evaluate_geometry_objective
+from models.fourier_galerkin.geom_loss import evaluate_geometry_objective
 from models.fourier_galerkin.residuals import *
 from utils.stateclass import TrainCfg, DesignState, Material
-from utils.utils import *
+from utils.utils import load_config, set_seed, thickness_from_constraint_torch, thickness_from_constraint
 from utils.logger import WBLogger, Checkpointer, load_checkpoint, load_checkpoint_multi
 
-def geometry_step(
+def geometry_fd_step(
     step_idx: int,
-    epoch: int,
+    ep_global: int,
     design,
     mesh,
     model,
     train_cfg,
     material,
     device,
-    optimizer,
-    scheduler=None):
+    M: torch.Tensor | None = None,
+    Kmat: torch.Tensor | None = None,):
 
-    # Keep mesh/model in sync (verts_torch depends on pitch, x_offset, thickness)
+    # Ensure mesh geometry matches its current parameters
     mesh.adjust_geometry()
     if hasattr(model, "set_mesh"):
         model.set_mesh(mesh)
 
-    # FE matrices depend on geometry AND thickness → build inside step so grads flow
-    M, Kmat = build_cst_mk(
-        verts=mesh.verts_torch,
-        tris=mesh.tris_torch,
-        E=material.E,
-        nu=material.nu,
-        rho=material.rho,
-        z_width=material.z_width,                  # <--- was material.z_width
+    # Evaluate objective (differentiable)
+    J = evaluate_geometry_objective(
+        mesh=mesh,
+        model=model,
+        train_cfg=train_cfg,
+        material=material,
+        device=device,
+        M=M,
+        Kmat=Kmat
     )
-    M    = M.to(device)
-    Kmat = Kmat.to(device)
 
-    # External nodal forces
-    f_verts = torch.zeros_like(mesh.verts_torch, device=device)
-    bottom_ids = mesh.bottom_ids.to(device, dtype=torch.long)
-    if bottom_ids.numel() > 0:
-        P0 = train_cfg.payload_P0
-        f_verts[bottom_ids, 1] = P0
-
-    # Time grid, IC, BC ids
-    t_batch  = torch.linspace(0.0, train_cfg.T, steps=train_cfg.time_steps, device=device)
-    u0_verts = torch.zeros_like(mesh.verts_torch, device=device)
-    bc_ids   = mesh.top_ids.to(device, dtype=torch.long)
-
-    # --------------------------
-    # Loss terms (geom flags)
-    # --------------------------
-    use_field_terms = train_cfg.geom_use_pde
-    use_vib_term    = train_cfg.geom_use_vib
-
-    if use_field_terms:
-        L_energy = energy_loss_fourier(t_batch, model, M, Kmat, f_verts, C=None)
-    else:
-        L_energy = torch.zeros((), device=device)
-
-    if use_vib_term:
-        L_vib = loss_bottom_vibration(model, mesh, component="v")
-    else:
-        L_vib = torch.zeros((), device=device)
-
-    J = train_cfg.w_pde * L_energy + train_cfg.w_vib * L_vib
-
-    # --------------------------
-    # Optimizer & scheduler
-    # --------------------------
-    optimizer.zero_grad()
-    J.backward()
-    optimizer.step()
-    if scheduler is not None:
-        scheduler.step()
-
-    # Sync design floats from mesh (for logging / constraints)
+    # For logging only: sync design floats from mesh
     with torch.no_grad():
-        px   = mesh.pitch[0].item()
-        py   = mesh.pitch[1].item()
+        # assuming mesh.pitch is shape (2,) tensor, mesh.x_offset, mesh.thickness are tensors
+        px = mesh.pitch[0].item()
+        py = mesh.pitch[1].item()
         xoff = mesh.x_offset.item()
-        t_now = mesh.thickness.item()
+        t_now = mesh.thickness.item() if hasattr(mesh, "thickness") else None
 
         design.px   = px
         design.py   = py
         design.xoff = xoff
+        if t_now is not None:
+            design.t = t_now  # if you have this field
 
-    # Console logging similar to sim_train_step
-    if (epoch % train_cfg.print_every) == 0 or epoch == 1:
-        print(
-            f"[GEOM {epoch:5d} | k={step_idx+1}] "
-            f"loss={J.item():.4e} | "
-            f"E={L_energy.item():.4e} | "
-            f"VIB={L_vib.item():.4e} | "
-            f"px={design.px:.4f} py={design.py:.4f} "
-            f"xoff={design.xoff:.4f} t={t_now:.4f}"
-        )
+    if ep_global % train_cfg.print_every == 0:
+        if hasattr(design, "t"):
+            print(
+                f"[GEOM {ep_global:05d} | k={step_idx+1}] "
+                f"px={design.px:.4f} py={design.py:.4f} xoff={design.xoff:.4f} t={design.t:.4f}"
+            )
+        else:
+            print(
+                f"[GEOM {ep_global:05d} | k={step_idx+1}] "
+                f"px={design.px:.4f} py={design.py:.4f} xoff={design.xoff:.4f}"
+            )
 
-    return {
-        "loss":     J.detach(),
-        "L_energy": L_energy.detach(),
-        "L_vib":    L_vib.detach(),
-    }
-
+    # IMPORTANT: return tensor, not float, so caller can do backward()
+    return J
 
 
 def sim_train_step(
@@ -137,7 +97,7 @@ def sim_train_step(
             E=material.E,
             nu=material.nu,
             rho=material.rho,
-            z_width=material.z_width,
+            th=material.z_width,
         )
         M    = M.to(device)
         Kmat = Kmat.to(device)
@@ -161,32 +121,61 @@ def sim_train_step(
     optimizer.zero_grad()
 
     L_energy = energy_loss_fourier(t_batch, model, M, Kmat, f_verts, C=Cmat)
+    L_ic     = loss_initial_condition(model, u0_verts)
+    L_bc     = loss_boundary_sine(
+        model,
+        t_batch,
+        bc_ids,
+        amp_y=train_cfg.V0,
+        phase=0.0,
+        offset_y=0.0,
+        x_fixed=0.0,
+    )
 
     # --- always compute L_vib for logging, only use it in loss if enabled ---
     if train_cfg.sim_use_vib_loss:
-        L_vib = loss_bottom_vibration(model, mesh,component="v")
-        L_vib_term = L_vib
+        L_vib = loss_bottom_vibration(
+            model,
+            mesh,
+            component="v",
+        )
+        L_vib_term = train_cfg.w_vib * L_vib
     else:
         with torch.no_grad():
-            L_vib = loss_bottom_vibration(model, mesh, component="v")
-            L_vib_term = torch.zeros((), device=device)
+            L_vib = loss_bottom_vibration(
+                model,
+                mesh,
+                component="v",
+            )
+        L_vib_term = torch.zeros((), device=device)
 
-    loss = train_cfg.w_pde * L_energy + train_cfg.w_vib * L_vib_term
+    loss = (
+        train_cfg.w_pde      * L_energy
+        # + train_cfg.w_ic     * L_ic
+        # + train_cfg.w_bc_top * L_bc
+        + train_cfg.w_bc_top * L_vib_term
+    )
+
     loss.backward(retain_graph=True)
     optimizer.step()
-    scheduler.step()
+    if scheduler is not None:
+        scheduler.step()
 
     if (epoch % train_cfg.print_every) == 0 or epoch == 1:
         print(
             f"[SIM {epoch:5d}] "
             f"loss={loss.item():.4e} | "
             f"E={L_energy.item():.4e} | "
+            f"IC={L_ic.item():.4e} | "
+            f"BC={L_bc.item():.4e} | "
             f"VIB={L_vib.item():.4e}"
         )
 
     return {
         "loss":     loss.detach(),
         "L_energy": L_energy.detach(),
+        "L_ic":     L_ic.detach(),
+        "L_bc":     L_bc.detach(),
         "L_vib":    L_vib.detach(),   # always meaningful now
         "M":        M,
         "Kmat":     Kmat,
@@ -201,8 +190,8 @@ def train_cst_pinn(
     material,
     device,
     checkpointer: Checkpointer | None = None,
-    logger: WBLogger | None = None):
-
+    logger: WBLogger | None = None,
+):
     mode = train_cfg.train_mode.lower()
     assert mode in ("simulation", "geometry", "alternating"), f"Unknown train_mode: {mode}"
 
@@ -214,7 +203,8 @@ def train_cst_pinn(
     print("model device:", next(model.parameters()).device)
     print("bottom_ids device:", mesh.bottom_ids.device)
 
-    # --- SIM optimizer/scheduler ---
+    # --- optimizers / schedulers ---
+    # Simulation optimizer: model parameters only (as before)
     if do_sim:
         sim_optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.lr)
         total_sim_steps = max(1, train_cfg.num_cycles * train_cfg.sim_epochs_per_cycle)
@@ -227,24 +217,18 @@ def train_cst_pinn(
         sim_optimizer = None
         sim_scheduler = None
 
-    # --- GEOM optimizer/scheduler ---
+    # Geometry optimizer: mesh parameters (design parameters) via autograd
     if do_geom:
         geom_optimizer = torch.optim.Adam(mesh.parameters(), lr=train_cfg.geom_lr)
-        total_geom_steps = max(1, train_cfg.num_cycles * train_cfg.geom_steps_per_cycle)
-        geom_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            geom_optimizer,
-            T_max=total_geom_steps,
-            eta_min=train_cfg.eta_min,
-        )
     else:
         geom_optimizer = None
-        geom_scheduler = None
 
     global_step = 0
 
     for cycle in range(1, train_cfg.num_cycles + 1):
         print(f"\n=== CYCLE {cycle}/{train_cfg.num_cycles} ===")
 
+        # Ensure mesh verts are consistent with its parameters at cycle start
         mesh.adjust_geometry()
         if hasattr(model, "set_mesh"):
             model.set_mesh(mesh)
@@ -253,13 +237,14 @@ def train_cst_pinn(
         # 1) SIMULATION PHASE
         # -----------------------
         if do_sim:
+            # build FE matrices for current geometry once per cycle
             M, Kmat = build_cst_mk(
                 verts=mesh.verts_torch,
                 tris=mesh.tris_torch,
                 E=material.E,
                 nu=material.nu,
                 rho=material.rho,
-                z_width=material.z_width,
+                th=material.z_width,
             )
             M = M.to(device)
             Kmat = Kmat.to(device)
@@ -284,9 +269,11 @@ def train_cst_pinn(
                 if logger is not None:
                     logger.log(
                         {
-                            "lr/sim": sim_optimizer.param_groups[0]["lr"],
+                            "lr": sim_optimizer.param_groups[0]["lr"],
                             "loss/total":   sim_out["loss"].item(),
                             "loss/energy":  sim_out["L_energy"].item(),
+                            "loss/ic":      sim_out["L_ic"].item(),
+                            "loss/bc_top":  sim_out["L_bc"].item(),
                             "loss/vib":     sim_out["L_vib"].item(),
                             "geom/px":   design.px,
                             "geom/py":   design.py,
@@ -305,31 +292,33 @@ def train_cst_pinn(
             for k in range(train_cfg.geom_steps_per_cycle):
                 global_step += 1
 
-                geom_out = geometry_step(
+                geom_optimizer.zero_grad(set_to_none=True)
+
+                # geometry_fd_step returns a torch scalar J (no FD, pure autograd)
+                J = geometry_fd_step(
                     step_idx=k,
-                    epoch=global_step,
+                    ep_global=global_step,
                     design=design,
                     mesh=mesh,
                     model=model,
                     train_cfg=train_cfg,
                     material=material,
                     device=device,
-                    optimizer=geom_optimizer,
-                    scheduler=geom_scheduler,
                 )
+
+                J.backward()
+                geom_optimizer.step()
 
                 if logger is not None:
                     logger.log(
                         {
-                            "lr/geom":  geom_optimizer.param_groups[0]["lr"],
-                            "geom/J":   geom_out["loss"].item(),
-                            "geom/E":   geom_out["L_energy"].item(),
-                            "geom/VIB": geom_out["L_vib"].item(),
+                            "geom/J":   J.item(),
                             "geom/px":  design.px,
                             "geom/py":  design.py,
                             "geom/xoff": design.xoff,
                             "geom/t":   thickness_from_constraint(
-                                design.C, design.px, design.py, design.xoff),
+                                design.C, design.px, design.py, design.xoff
+                            ),
                         },
                         step=global_step,
                     )
@@ -345,7 +334,8 @@ def train_cst_pinn(
                 mesh=mesh,
                 T=train_cfg.T,
                 steps=100,
-                device=device)
+                device=device,
+            )
 
 
 def main():
@@ -382,7 +372,7 @@ def main():
         grid_size=grid_size,
         pitch=pitch,
         x_offset=x_offset,
-        C_constraint=C,
+        thickness=thickness,
         add_diagonals=cfg_json["geometry"]["add_diagonals"],
     ).to(device)
 

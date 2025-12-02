@@ -24,9 +24,9 @@ class FourierNodeModel(nn.Module):
         train_cfg,
         mesh,
         device,
-        width: int = 128,
+        width: int = 256,
         depth: int = 4,
-        act=nn.SiLU,
+        act=nn.ELU,
     ):
         super().__init__()
         self.K = int(train_cfg.fourier_K)
@@ -58,6 +58,7 @@ class FourierNodeModel(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
+        # trunk + heads initialization
         for m in self.trunk:
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
@@ -65,6 +66,12 @@ class FourierNodeModel(nn.Module):
         for head in (self.head_u, self.head_v):
             nn.init.xavier_uniform_(head.weight)
             nn.init.zeros_(head.bias)
+
+        # ---- NEW: initialize all nodes' v(t) to V0 sin(ωt) ----
+        # head_v output layout = [a0, a1, b1, a2, b2, ...]
+        if self.K >= 1:
+            with torch.no_grad():
+                self.head_v.bias[2] = self.V0   # b1 = V0
 
     def set_mesh(self, mesh):
         self.mesh = mesh
@@ -160,8 +167,8 @@ class FourierNodeModel(nn.Module):
                 a_k_v = coef_v[:, 2 * k - 1]
                 b_k_v = coef_v[:, 2 * k]
 
-                kω = k * self.omega
-                kω2 = kω * kω
+                kw = k * self.omega
+                kw2 = kw * kw
 
                 cos_kwt = torch.cos(k * wt_base)
                 sin_kwt = torch.sin(k * wt_base)
@@ -174,11 +181,11 @@ class FourierNodeModel(nn.Module):
                 u   = u   + a_k_uB * cos_kwt + b_k_uB * sin_kwt
                 v   = v   + a_k_vB * cos_kwt + b_k_vB * sin_kwt
 
-                ut  = ut  + (-a_k_uB * kω * sin_kwt + b_k_uB * kω * cos_kwt)
-                vt  = vt  + (-a_k_vB * kω * sin_kwt + b_k_vB * kω * cos_kwt)
+                ut  = ut  + (-a_k_uB * kw * sin_kwt + b_k_uB * kw * cos_kwt)
+                vt  = vt  + (-a_k_vB * kw * sin_kwt + b_k_vB * kw * cos_kwt)
 
-                utt = utt + (-a_k_uB * kω2 * cos_kwt - b_k_uB * kω2 * sin_kwt)
-                vtt = vtt + (-a_k_vB * kω2 * cos_kwt - b_k_vB * kω2 * sin_kwt)
+                utt = utt + (-a_k_uB * kw2 * cos_kwt - b_k_uB * kw2 * sin_kwt)
+                vtt = vtt + (-a_k_vB * kw2 * cos_kwt - b_k_vB * kw2 * sin_kwt)
 
         disp = torch.stack([u, v], dim=-1)
         vel  = torch.stack([ut, vt], dim=-1)

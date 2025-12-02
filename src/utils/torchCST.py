@@ -1,7 +1,11 @@
 import numpy as np
 import torch
 
-class Aux:
+import numpy as np
+import torch
+import torch.nn as nn
+
+class Aux(nn.Module):
     def __init__(
         self,
         grid_size=(10, 10),
@@ -10,16 +14,15 @@ class Aux:
         thickness=0.15,
         add_diagonals=False,
         quantize=1e-9,
-        joint_radius=None,          # if None -> 0.5*thickness; else clamped to [1e-12, 0.5*thickness]
-        joint_cap="square",         # 'square' adds small caps; 'none' skips caps
-        remove_horizontal_rule="checker_even",  # 'none' | 'checker_even' (skip when (i+j)%2==0)
-        keep_boundary_horiz=True
+        joint_radius=None,
+        joint_cap="square",
+        remove_horizontal_rule="checker_even",
+        keep_boundary_horiz=True,
     ) -> None:
+        super().__init__()
 
+        # --- constants / non-trainable config ---
         self.grid_size = tuple(grid_size)
-        self.pitch = tuple(pitch)
-        self.x_offset = float(x_offset)
-        self.thickness = float(thickness)
         self.add_diagonals = bool(add_diagonals)
         self.quantize = float(quantize)
         self.joint_radius = joint_radius
@@ -27,21 +30,34 @@ class Aux:
         self.remove_horizontal_rule = remove_horizontal_rule
         self.keep_boundary_horiz = bool(keep_boundary_horiz)
 
+        # frozen copies used only for initial NumPy topology generation
+        self._pitch0 = tuple(pitch)
+        self._x_offset0 = float(x_offset)
+        self._thickness0 = float(thickness)
+
+        # --- trainable design parameters (used in differentiable path) ---
+        self.pitch = nn.Parameter(torch.tensor(pitch, dtype=torch.float32))        # (2,)
+        self.x_offset = nn.Parameter(torch.tensor(float(x_offset), dtype=torch.float32))
+        self.register_buffer("thickness", torch.tensor(float(thickness), dtype=torch.float32))
+
         # Outputs
-        self.verts_torch: torch.Tensor = None  # (nv,2) float32
-        self.tris_torch: torch.Tensor = None   # (nt,3) int64
+        self.register_buffer("verts_torch", torch.empty(0, 2, dtype=torch.float32))
+        self.register_buffer("tris_torch",  torch.empty(0, 3, dtype=torch.int64))
+        self.register_buffer("bottom_ids",  torch.empty(0,    dtype=torch.int64))
+        self.register_buffer("top_ids",     torch.empty(0,    dtype=torch.int64))
         self.nv = 0
         self.nt = 0
         self.alias_probs = None
-        self.bottom_ids = None
-        self.top_ids = None
 
-        # Vectorized joint corner arrays for optional downstream use
+        # Joints (NumPy) for downstream stuff if needed
         self.joints = {}
 
-        # Build everything
+        # corner provenance: per-vertex (j,i,corner_id)
+        self.register_buffer("_corner_ref", torch.empty(0, 3, dtype=torch.long))
+
+        # Build topology with NumPy, then build differentiable verts with torch
         self._generate_mesh_vectorized()
-        self._generate_torch_mesh()
+        self._generate_torch_mesh() 
         self._compute_boundary_ids()
 
     # ----------------------------
@@ -65,9 +81,9 @@ class Aux:
             mask[-1, :] = True
         return mask
 
-    def _cap_half_size(self):
-        s = 0.5 * self.thickness if (self.joint_radius is None) else float(self.joint_radius)
-        return float(np.clip(s, 1e-12, 0.5 * self.thickness))
+    def _cap_half_size_np(self):
+        s = 0.5 * self._thickness0 if (self.joint_radius is None) else float(self.joint_radius)
+        return float(np.clip(s, 1e-12, 0.5 * self._thickness0))
 
     def _compute_node_centers(self):
         nx, ny = self.grid_size
@@ -93,18 +109,18 @@ class Aux:
     # ----------------------------
     def _generate_mesh_vectorized(self):
         nx, ny = self.grid_size
-        px, py = self.pitch
+        px, py = self._pitch0      # use frozen copies
         q = self.quantize
 
         # Node centers P[j,i]
         i_idx = np.arange(nx)[None, :].repeat(ny, axis=0)
         j_idx = np.arange(ny)[:, None].repeat(nx, axis=1)
         sign = np.where(((i_idx + j_idx) % 2) == 1, -1.0, 1.0)
-        cx = i_idx * px + sign * self.x_offset
+        cx = i_idx * px + sign * self._x_offset0
         cy = j_idx * py
 
         # Corner half size
-        s = self._cap_half_size()
+        s = self._cap_half_size_np()
         if self.joint_cap == "none":
             s_eff = 1e-9
             include_caps = False
@@ -277,8 +293,8 @@ class Aux:
         verts_np = (uniq_grid * q).astype(np.float64)         # (nv,2)
         I        = inverse.reshape(-1, 3).astype(np.int64)    # (nt,3)
 
-        # Cache per-vertex (j,i,corner_id) from first occurrence
-        self._corner_ref = tris_meta[first_idx]               # (nv,3) int64
+        # Cache per-vertex (j,i,corner_id) from first occurrence (NumPy only here)
+        self._corner_ref_np = tris_meta[first_idx].astype(np.int64)  # (nv,3) int64
 
         self._verts_np = verts_np
         self._tris_np  = I
@@ -287,77 +303,138 @@ class Aux:
     # Torch conversion + stats
     # ----------------------------
     def _generate_torch_mesh(self):
+        device = self.pitch.device  # pitch is a Parameter, so this is reliable
+
         if self._verts_np.size == 0:
-            self.verts_torch = torch.empty((0, 2), dtype=torch.float32)
-            self.tris_torch = torch.empty((0, 3), dtype=torch.int64)
+            self.verts_torch = torch.empty((0, 2), dtype=torch.float32, device=device)
+            self.tris_torch  = torch.empty((0, 3), dtype=torch.int64,  device=device)
             self.nv = 0
             self.nt = 0
+            self._corner_ref = torch.empty((0, 3), dtype=torch.long, device=device)
             return
 
-        self.verts_torch = torch.from_numpy(self._verts_np.astype(np.float32))
-        self.tris_torch = torch.from_numpy(self._tris_np.astype(np.int64))
-        self.nv = int(self.verts_torch.shape[0])
+        # connectivity is fixed: just convert to tensor
+        self.tris_torch = torch.from_numpy(self._tris_np.astype(np.int64)).to(device)
         self.nt = int(self.tris_torch.shape[0])
 
+        corner_ref_t = torch.from_numpy(self._corner_ref_np.astype(np.int64)).to(device)
+        self._corner_ref = corner_ref_t
+        self.nv = int(corner_ref_t.shape[0])
+
+        TL, TR, BR, BL = self._compute_corners_from_params_torch()
+
+        jiC = self._corner_ref  # (nv,3)
+        j = jiC[:, 0]
+        i = jiC[:, 1]
+        c = jiC[:, 2]
+
+        corners_stack = torch.stack([TL, TR, BR, BL], dim=0)  # (4,ny,nx,2)
+        self.verts_torch = corners_stack[c, j, i]             # (nv,2)
+
+
     def _compute_boundary_ids(self):
+        device = self.verts_torch.device
         if self.nv == 0:
-            self.bottom_ids = torch.empty(0, dtype=torch.int64)
-            self.top_ids = torch.empty(0, dtype=torch.int64)
+            self.bottom_ids = torch.empty(0, dtype=torch.int64, device=device)
+            self.top_ids    = torch.empty(0, dtype=torch.int64, device=device)
             return
+
         y = self.verts_torch[:, 1]
         ymin = torch.min(y)
         ymax = torch.max(y)
         tol = max(self.quantize, 1e-12)
         self.bottom_ids = torch.nonzero(torch.isclose(y, ymin, atol=tol), as_tuple=False).squeeze(1)
-        self.top_ids = torch.nonzero(torch.isclose(y, ymax, atol=tol), as_tuple=False).squeeze(1)
+        self.top_ids    = torch.nonzero(torch.isclose(y, ymax, atol=tol), as_tuple=False).squeeze(1)
+
+    def _cap_half_size_torch(self):
+        device = self.thickness.device
+        dtype  = self.thickness.dtype
+
+        if self.joint_radius is None:
+            s = 0.5 * self.thickness
+        else:
+            s = torch.as_tensor(self.joint_radius, device=device, dtype=dtype)
+
+        min_val = torch.as_tensor(1e-12, device=device, dtype=dtype)
+        max_val = 0.5 * self.thickness
+
+        s = torch.clamp(s, min=min_val, max=max_val)
+        return s
+
+    def _compute_node_centers_torch(self):
+        """
+        Returns:
+            cx, cy: (ny, nx) torch tensors depending on pitch and x_offset.
+        """
+        device = self.pitch.device
+        px, py = self.pitch  # (2,) tensor
+
+        nx, ny = self.grid_size
+        i_idx = torch.arange(nx, device=device).view(1, nx).repeat(ny, 1)  # (ny,nx)
+        j_idx = torch.arange(ny, device=device).view(ny, 1).repeat(1, nx)  # (ny,nx)
+
+        parity = (i_idx + j_idx) % 2
+        sign = torch.where(parity == 1, torch.full_like(parity, -1.0, dtype=torch.float32),
+                                      torch.full_like(parity,  1.0, dtype=torch.float32))
+
+        cx = i_idx.to(torch.float32) * px + sign * self.x_offset
+        cy = j_idx.to(torch.float32) * py
+        return cx, cy
+
+    def _compute_corners_from_params_torch(self):
+        cx, cy = self._compute_node_centers_torch()
+        s = self._cap_half_size_torch() if self.joint_cap != "none" else torch.tensor(
+            1e-9, device=cx.device, dtype=cx.dtype
+        )
+
+        # broadcasting: cx, cy: (ny,nx), s: scalar tensor
+        TL = torch.stack([cx - s, cy + s], dim=-1)  # (ny,nx,2)
+        TR = torch.stack([cx + s, cy + s], dim=-1)
+        BR = torch.stack([cx + s, cy - s], dim=-1)
+        BL = torch.stack([cx - s, cy - s], dim=-1)
+        return TL, TR, BR, BL
     
     def adjust_geometry(self, pitch_new=None, x_offset_new=None, thickness_new=None):
         """
-        O(nv) fast geometry update: only recompute node corners and move existing vertices.
-        Keeps connectivity, indices, and device. Recomputes areas and boundary ids.
+        O(nv) geometry update: recompute node corners and move existing vertices.
+        Keeps connectivity and recomputes boundary ids. Differentiable w.r.t.
+        pitch and x_offset (thickness is treated as a non-trainable buffer).
         """
-        # Normalize inputs
-        if pitch_new is not None:
-            if isinstance(pitch_new, (int, float)):
-                pitch_new = (float(pitch_new), float(pitch_new))
-            elif len(pitch_new) == 2:
-                pitch_new = (float(pitch_new[0]), float(pitch_new[1]))
-            else:
-                raise ValueError("pitch_new must be a float or (px, py) tuple")
-        if x_offset_new is not None:
-            x_offset_new = float(x_offset_new)
-        if thickness_new is not None:
-            thickness_new = float(thickness_new)
+        device = self.pitch.device
 
-        changed = False
-        if pitch_new is not None and pitch_new != self.pitch:
-            self.pitch = pitch_new; changed = True
-        if x_offset_new is not None and x_offset_new != self.x_offset:
-            self.x_offset = x_offset_new; changed = True
-        if thickness_new is not None and thickness_new != self.thickness:
-            self.thickness = thickness_new; changed = True
+        # Optional manual overwrite of parameters (no grad)
+        with torch.no_grad():
+            if pitch_new is not None:
+                if isinstance(pitch_new, (int, float)):
+                    pitch_new = (float(pitch_new), float(pitch_new))
+                elif len(pitch_new) != 2:
+                    raise ValueError("pitch_new must be a float or (px, py) tuple")
+                self.pitch.data = torch.tensor(pitch_new, device=device, dtype=torch.float32)
 
-        if not changed or self.nv == 0:
+            if x_offset_new is not None:
+                self.x_offset.data = torch.tensor(float(x_offset_new), device=device)
+
+            if thickness_new is not None:
+                # thickness_new is already computed (e.g. from design.C constraint)
+                self.thickness.data = torch.tensor(float(thickness_new), device=device)
+
+        if self.nv == 0:
             return self
 
-        # Recompute corners for new parameters
-        TL, TR, BR, BL = self._compute_corners_from_params()
+        # Differentiable rebuild w.r.t pitch and x_offset
+        TL, TR, BR, BL = self._compute_corners_from_params_torch()
 
-        # Gather per-vertex new coordinates via cached (j,i,corner_id)
-        # corner_id: 0=TL,1=TR,2=BR,3=BL
-        jiC = self._corner_ref  # (nv,3) int64
-        j = jiC[:, 0]; i = jiC[:, 1]; c = jiC[:, 2]
+        jiC = self._corner_ref  # (nv,3) long
+        j = jiC[:, 0]
+        i = jiC[:, 1]
+        c = jiC[:, 2]
 
-        # Build a view array for quick gather
-        # For vectorized selection, stack the four corner fields and pick by c
-        corners_stack = np.stack([TL, TR, BR, BL], axis=0)  # (4, ny, nx, 2)
-        # Advanced indexing: corners_stack[c, j, i] -> (nv,2)
-        new_verts_np = corners_stack[c, j, i].astype(np.float32)
+        corners_stack = torch.stack([TL, TR, BR, BL], dim=0)  # (4,ny,nx,2)
+        new_verts = corners_stack[c, j, i]                    # (nv,2)
 
-        # Preserve device and dtype
-        device = self.verts_torch.device
-        self.verts_torch = torch.from_numpy(new_verts_np).to(device)
+        self.verts_torch = new_verts
 
-        # Recompute areas, alias probs, boundary ids (indices unchanged)
+        # boundary ids are discrete → do without grad
         self._compute_boundary_ids()
+
         return self

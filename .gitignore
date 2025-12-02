@@ -1,5 +1,7 @@
 outputs/data/*
+outputs/checkpoints/*
 __pycache__/*
-wandb/
+wandb/*
+
 
 *.pyc

@@ -1,6 +1,6 @@
 {
     "training": {
-        "name": "251123_final_fourier_v1",
+        "name": "noraml_20",
         "T": 5.0,
         "f_top": 2.0,
         "V0": 0.005,
@@ -40,10 +40,10 @@
     
     "geometry": {
         "C": 0.002,
-        "grid_size": [6, 20],
-        "pitch": [0.15, 0.1],
-        "x_offset": 0.02,
-        "add_diagonals": true
+        "grid_size": [5, 20],
+        "pitch": [0.1362, 0.1034],
+        "x_offset": 0.033,
+        "add_diagonals": false
     },
 
     "material": {
