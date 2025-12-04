@@ -224,47 +224,73 @@ def loss_boundary_sine(
     return loss_bc
 
 
-def loss_bottom_vibration(
-    model,
-    mesh,
-    component: str = "v",
-):
-    """
-    Time-RMS (DC-removed) of bottom-edge motion, computed analytically
-    from Fourier coefficients (no time sampling).
+# def loss_bottom_vibration(
+#     model,
+#     mesh,
+#     component: str = "v",
+# ):
+#     """
+#     Time-RMS (DC-removed) of bottom-edge motion, computed analytically
+#     from Fourier coefficients (no time sampling).
 
-    Assumes:
-      - model._coeffs() returns (coef_u, coef_v) with layout
-            [a0, a1, b1, a2, b2, ..., aK, bK],
-      - all cosine terms a0, a_k have been zeroed in _coeffs()
-        (so time-mean ≈ 0 and RMS^2 = 0.5 * sum_k b_k^2).
+#     Assumes:
+#       - model._coeffs() returns (coef_u, coef_v) with layout
+#             [a0, a1, b1, a2, b2, ..., aK, bK],
+#       - all cosine terms a0, a_k have been zeroed in _coeffs()
+#         (so time-mean ≈ 0 and RMS^2 = 0.5 * sum_k b_k^2).
+#     """
+#     device = next(model.parameters()).device
+
+#     if mesh.bottom_ids.numel() == 0:
+#         return torch.zeros((), dtype=torch.float32, device=device)
+
+#     bottom_ids = mesh.bottom_ids.to(device, dtype=torch.long)
+
+#     coef_u, coef_v = model._coeffs()  # (N_verts, 2K+1)
+#     coef_u_b = coef_u[bottom_ids, :]
+#     coef_v_b = coef_v[bottom_ids, :]
+
+#     b_u = coef_u_b[:, 2::2]  # (Nb, K)
+#     b_v = coef_v_b[:, 2::2]
+
+#     if component == "u":
+#         return torch.sqrt(0.5 * (b_u**2).mean())
+#     elif component == "v":
+#         return torch.sqrt(0.5 * (b_v**2).mean())
+#     elif component == "uv":
+#         return torch.sqrt(0.25 * ((b_u**2).mean() + (b_v**2).mean()))
+#     else:
+#         return torch.sqrt(0.5 * (b_v**2).mean())
+
+
+def loss_bottom_vibration(model, mesh, component: str = "v"):
     """
+    Sum of per-mode amplitudes averaged over bottom nodes.
+
+        R_i,k = sqrt(a_i,k^2 + b_i,k^2)
+        mean_R_k = mean over bottom nodes
+        loss = sum_k mean_R_k
+    """
+
     device = next(model.parameters()).device
-
     if mesh.bottom_ids.numel() == 0:
         return torch.zeros((), dtype=torch.float32, device=device)
 
     bottom_ids = mesh.bottom_ids.to(device, dtype=torch.long)
+    coef_u, coef_v = model._coeffs() 
 
-    coef_u, coef_v = model._coeffs()  # (N_verts, 2K+1)
-    coef_u_b = coef_u[bottom_ids, :]
-    coef_v_b = coef_v[bottom_ids, :]
+    coef = coef_u if component == "u" else coef_v
+    coef_b = coef[bottom_ids, :] 
 
-    b_u = coef_u_b[:, 2::2]  # (Nb, K)
-    b_v = coef_v_b[:, 2::2]
+    a = coef_b[:, 1::2]                # (Nb, K)
+    b = coef_b[:, 2::2]                # (Nb, K)
+    R = torch.sqrt(a * a + b * b)      # (Nb, K)
 
-    if component == "u":
-        return torch.sqrt(0.5 * (b_u**2).mean())
-    elif component == "v":
-        return torch.sqrt(0.5 * (b_v**2).mean())
-    elif component == "uv":
-        return torch.sqrt(0.25 * ((b_u**2).mean() + (b_v**2).mean()))
-    else:
-        return torch.sqrt(0.5 * (b_v**2).mean())
+    mean_R_per_mode = R.mean(dim=0)
+    return mean_R_per_mode.sum()
 
 
-
-def loss_collision(mesh, margin: float = 0.0, eps: float = 1e-6):
+def loss_collision(mesh, margin: float = 0.001, eps: float = 1e-6):
     """
     Penalize violations of:
         px - 2*x_offset - t > margin
@@ -284,4 +310,37 @@ def loss_collision(mesh, margin: float = 0.0, eps: float = 1e-6):
     loss = loss + torch.relu((margin + eps) - xoff) ** 2
     loss = loss + torch.relu((margin + eps) - t) ** 2
 
+    return loss
+
+
+def loss_bottom_vibration_tsample(
+    model,
+    mesh,
+    t_batch: torch.Tensor,
+    component: str = "v",
+):
+    """
+    DC-removed RMS of bottom motion, time-sampled.
+
+    t_batch : (N_t,) or any shape
+    component : "u" or "v"
+    """
+    device = next(model.parameters()).device
+    t_batch = t_batch.to(device)
+
+    if mesh.bottom_ids.numel() == 0:
+        return torch.zeros((), dtype=torch.float32, device=device)
+
+    bottom_ids = mesh.bottom_ids.to(device, dtype=torch.long)
+    comp_idx = 0 if component == "u" else 1
+
+    disp, _, _ = model.eval_with_derivs(t_batch)   # (*T_shape, N_verts, 2)
+    disp = disp.reshape(-1, disp.shape[-2], 2)     # (N_t_flat, N_verts, 2)
+
+    bottom_disp = disp[:, bottom_ids, comp_idx]    # (N_t_flat, N_bottom)
+    bottom_mean = bottom_disp.mean(dim=0, keepdim=True)
+    bottom_centered = bottom_disp - bottom_mean
+
+    rms_per_node = torch.sqrt(torch.mean(bottom_centered**2, dim=0))  # (N_bottom,)
+    loss = rms_per_node.mean()
     return loss

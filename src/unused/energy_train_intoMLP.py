@@ -116,7 +116,7 @@ def geometry_step(
         L_energy = torch.zeros((), device=device)
 
     if use_vib_term:
-        L_vib = loss_bottom_vibration(model, mesh, component="v")
+        L_vib = loss_bottom_vibration_tsample(model, mesh, t_batch, component="v")
     else:
         L_vib = torch.zeros((), device=device)
     
@@ -205,11 +205,11 @@ def sim_train_step(
     L_energy = energy_loss_fourier(t_batch, model, M, Kmat, f_verts, C=Cmat)
 
     if train_cfg.sim_use_vib_loss:
-        L_vib = loss_bottom_vibration(model, mesh,component="v")
+        L_vib = loss_bottom_vibration_tsample(model, mesh, t_batch, component="v")
         L_vib_term = L_vib
     else:
         with torch.no_grad():
-            L_vib = loss_bottom_vibration(model, mesh, component="v")
+            L_vib = loss_bottom_vibration_tsample(model, mesh, t_batch, component="v")
             L_vib_term = torch.zeros((), device=device)
 
     loss = train_cfg.w_pde * L_energy + train_cfg.w_vib * L_vib_term

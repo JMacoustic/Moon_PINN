@@ -153,6 +153,54 @@ def load_displacements_sequence(data_dir: Path, verts0: np.ndarray):
     return verts_stack, npz_files
 
 
+def make_edge_displacement_plot(
+    verts_stack: np.ndarray,
+    mesh: Aux,
+    times: np.ndarray,
+    out_path: Path,
+    dpi: int = 300,
+):
+    """
+    Plot time-varying average y-displacement of bottom and top nodes.
+    """
+    verts_ref = verts_stack[0]
+    disp = verts_stack - verts_ref[None, ...]
+    disp_y = disp[..., 1]
+
+    bottom_ids = getattr(mesh, "bottom_ids", None)
+    top_ids = getattr(mesh, "top_ids", None)
+
+    bottom_mean = None
+    top_mean = None
+
+    if bottom_ids is not None and bottom_ids.numel() > 0:
+        b_idx = bottom_ids.detach().cpu().numpy().astype(int)
+        bottom_mean = disp_y[:, b_idx].mean(axis=1)
+
+    if top_ids is not None and top_ids.numel() > 0:
+        t_idx = top_ids.detach().cpu().numpy().astype(int)
+        top_mean = disp_y[:, t_idx].mean(axis=1)
+
+    # Longer / wider figure; flatter aspect
+    fig, ax = plt.subplots(figsize=(8, 2.3), dpi=dpi)
+
+    if bottom_mean is not None:
+        ax.plot(times, bottom_mean, label="Bottom ⟨v⟩", linewidth=0.8)
+
+    # Optional: top line if needed later
+    # if top_mean is not None:
+    #     ax.plot(times, top_mean, label="Top ⟨v⟩", linewidth=0.8)
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Average y-displacement")
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
+
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[PNG] Saved edge displacement plot: {out_path}")
+
+
 # ---------- visualization: GIF ----------
 
 def make_mesh_gif(verts_stack: np.ndarray, tris: np.ndarray,
@@ -218,6 +266,7 @@ def make_vibration_heatmap(verts_stack: np.ndarray, tris: np.ndarray,
     print(f"[PNG] Saved vibration heatmap: {out_path}")
 
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
@@ -256,10 +305,12 @@ def main():
     # Outputs
     gif_path = visuals_dir / f"{run_name}.gif"
     png_path = visuals_dir / f"{run_name}.png"
+    edge_plot_path = visuals_dir / f"{run_name}_edge_disp.png"
 
     # Visualizations
     make_mesh_gif(verts_stack, tris, gif_path)
     make_vibration_heatmap(verts_stack, tris, png_path)
+    make_edge_displacement_plot(verts_stack, aux, times, edge_plot_path)
 
 
 if __name__ == "__main__":

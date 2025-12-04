@@ -1,1 +1,1 @@
-python src/visualize.py --config configs/base_config.json --steps 500
+python src/visualize.py --config configs/base_config.json --steps 100
